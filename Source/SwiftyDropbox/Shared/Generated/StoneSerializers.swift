@@ -76,8 +76,8 @@ open class SerializeUtil {
         }
     }
 
-    open class func parseJSON(_ data: Data) -> JSON {
-        let obj: AnyObject = try! JSONSerialization.jsonObject(with: data, options: JSONSerialization.ReadingOptions.allowFragments) as AnyObject
+    open class func parseJSON(_ data: Data) throws -> JSON {
+        let obj: AnyObject = try JSONSerialization.jsonObject(with: data, options: JSONSerialization.ReadingOptions.allowFragments) as AnyObject
         return objectToJSON(obj)
     }
 }

@@ -401,55 +401,60 @@ open class Request<RSerial: JSONSerializer, ESerial: JSONSerializer> {
     func handleResponseError(_ response: HTTPURLResponse?, data: Data?, error: Error?) -> CallError<ESerial.ValueType> {
         let requestId = response?.allHeaderFields["X-Dropbox-Request-Id"] as? String
         if let code = response?.statusCode {
-            switch code {
-            case 500...599:
-                var message = ""
-                if let d = data {
-                    message = utf8Decode(d)
-                }
-                return .internalServerError(code, message, requestId)
-            case 400:
-                var message = ""
-                if let d = data {
-                    message = utf8Decode(d)
-                }
-                return .badInputError(message, requestId)
-            case 401:
-                let json = SerializeUtil.parseJSON(data!)
-                switch json {
-                case .dictionary(let d):
-                    return .authError(Auth.AuthErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
+            do {
+                switch code {
+                case 500...599:
+                    var message = ""
+                    if let d = data {
+                        message = utf8Decode(d)
+                    }
+                    return .internalServerError(code, message, requestId)
+                case 400:
+                    var message = ""
+                    if let d = data {
+                        message = utf8Decode(d)
+                    }
+                    return .badInputError(message, requestId)
+                case 401:
+                    let json = try SerializeUtil.parseJSON(data!)
+                    switch json {
+                    case .dictionary(let d):
+                        return .authError(Auth.AuthErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
+                    default:
+                        fatalError("Failed to parse error type")
+                    }
+                case 403:
+                    let json = try SerializeUtil.parseJSON(data!)
+                    switch json {
+                    case .dictionary(let d):
+                        return .accessError(Auth.AccessErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"),requestId)
+                    default:
+                        fatalError("Failed to parse error type")
+                    }
+                case 409:
+                    let json = try SerializeUtil.parseJSON(data!)
+                    switch json {
+                    case .dictionary(let d):
+                        return .routeError(Box(self.errorSerializer.deserialize(d["error"]!)), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
+                    default:
+                        fatalError("Failed to parse error type")
+                    }
+                case 429:
+                    let json = try SerializeUtil.parseJSON(data!)
+                    switch json {
+                    case .dictionary(let d):
+                        return .rateLimitError(Auth.RateLimitErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
+                    default:
+                        fatalError("Failed to parse error type")
+                    }
+                case 200:
+                    return .clientError(error)
                 default:
-                    fatalError("Failed to parse error type")
+                    return .httpError(code, "An error occurred.", requestId)
                 }
-            case 403:
-                let json = SerializeUtil.parseJSON(data!)
-                switch json {
-                case .dictionary(let d):
-                    return .accessError(Auth.AccessErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"),requestId)
-                default:
-                    fatalError("Failed to parse error type")
-                }
-            case 409:
-                let json = SerializeUtil.parseJSON(data!)
-                switch json {
-                case .dictionary(let d):
-                    return .routeError(Box(self.errorSerializer.deserialize(d["error"]!)), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
-                default:
-                    fatalError("Failed to parse error type")
-                }
-            case 429:
-                let json = SerializeUtil.parseJSON(data!)
-                switch json {
-                case .dictionary(let d):
-                    return .rateLimitError(Auth.RateLimitErrorSerializer().deserialize(d["error"]!), getStringFromJson(json: d, key: "user_message"), getStringFromJson(json: d, key: "error_summary"), requestId)
-                default:
-                    fatalError("Failed to parse error type")
-                }
-            case 200:
-                return .clientError(error)
-            default:
-                return .httpError(code, "An error occurred.", requestId)
+            } catch {
+                let jsonString = String(data: data!, encoding: .utf8) ?? "unknown error"
+                return .internalServerError(500, "Unexpected Response: \(jsonString)", nil)
             }
         } else if response == nil {
             return .clientError(error)
@@ -494,7 +499,7 @@ open class RpcRequest<RSerial: JSONSerializer, ESerial: JSONSerializer>: Request
             if let error = response.error {
                 completionHandler(nil, self.handleResponseError(response.response, data: response.data!, error: error))
             } else {
-                completionHandler(self.responseSerializer.deserialize(SerializeUtil.parseJSON(response.data!)), nil)
+                completionHandler(self.responseSerializer.deserialize(try! SerializeUtil.parseJSON(response.data!)), nil)
             }
         }
         return self
@@ -526,7 +531,7 @@ open class UploadRequest<RSerial: JSONSerializer, ESerial: JSONSerializer>: Requ
             if let error = response.error {
                 completionHandler(nil, self.handleResponseError(response.response, data: response.data!, error: error))
             } else {
-                completionHandler(self.responseSerializer.deserialize(SerializeUtil.parseJSON(response.data!)), nil)
+                completionHandler(self.responseSerializer.deserialize(try! SerializeUtil.parseJSON(response.data!)), nil)
             }
         }
         return self
@@ -566,7 +571,7 @@ open class DownloadRequestFile<RSerial: JSONSerializer, ESerial: JSONSerializer>
                 let headerFields: [AnyHashable : Any] = response.response!.allHeaderFields
                 let result = caseInsensitiveLookup("Dropbox-Api-Result", dictionary: headerFields)!
                 let resultData = result.data(using: .utf8, allowLossyConversion: false)
-                let resultObject = self.responseSerializer.deserialize(SerializeUtil.parseJSON(resultData!))
+                let resultObject = self.responseSerializer.deserialize(try! SerializeUtil.parseJSON(resultData!))
 
                 completionHandler((resultObject, self.urlPath!), nil)
             }
@@ -603,7 +608,7 @@ open class DownloadRequestMemory<RSerial: JSONSerializer, ESerial: JSONSerialize
                 let headerFields: [AnyHashable : Any] = response.response!.allHeaderFields
                 let result = caseInsensitiveLookup("Dropbox-Api-Result", dictionary: headerFields)!
                 let resultData = result.data(using: .utf8, allowLossyConversion: false)
-                let resultObject = self.responseSerializer.deserialize(SerializeUtil.parseJSON(resultData!))
+                let resultObject = self.responseSerializer.deserialize(try! SerializeUtil.parseJSON(resultData!))
 
                 completionHandler((resultObject, response.data!), nil)
             }
